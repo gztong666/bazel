@@ -32,6 +32,10 @@ jobs:
       - name: Reproduce failures with the original updater
         shell: bash
         run: |
+          mkdir -p "$RUNNER_TEMP/tmp probe"
+          probe_dir=$(TMPDIR="$RUNNER_TEMP/tmp probe" mktemp -d -t bazel.XXXXXX)
+          printf 'Native mktemp path: <%s>\n' "$probe_dir"
+          rmdir "$probe_dir"
           git show 1de6bcf1f38beb297e8d45f7bf10df3a2761927b:src/test/tools/bzlmod/update_default_lock_file.sh > src/test/tools/bzlmod/update_default_lock_file.sh
           set +e
           "$RUNNER_TEMP/bazel" --batch test --jobs=2 --test_output=all //src/test/tools/bzlmod:update_default_lock_file_test

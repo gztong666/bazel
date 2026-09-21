@@ -44,6 +44,7 @@ function check_update() {
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\0' "$@" > "${FIXTURE_DIR}/args"
+printf '%s\n' "$PWD" > "${FIXTURE_DIR}/workspace"
 [[ -f MODULE.bazel && -f BUILD ]]
 if [[ "$FIXTURE_STATUS" != 0 ]]; then
   exit "$FIXTURE_STATUS"
@@ -66,7 +67,9 @@ EOF
   else
     assert_equals 'original lockfile' "$(cat "$destination")"
   fi
-  assert_equals "" "$(ls -A "$tmp")" "Temporary workspace was not removed"
+  local generated_workspace="$(cat "${root}/workspace")"
+  [[ ! -d "$generated_workspace" ]] \
+    || fail "Temporary workspace was not removed: ${generated_workspace}"
 }
 
 function test_plain_paths() {
