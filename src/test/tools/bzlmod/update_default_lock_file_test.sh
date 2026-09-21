@@ -44,7 +44,7 @@ function check_update() {
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\0' "$@" > "${FIXTURE_DIR}/args"
-printf '%s\n' "$PWD" > "${FIXTURE_DIR}/workspace"
+printf '%s\n' "$PWD" > "${FIXTURE_DIR}/generated.workspace"
 [[ -f MODULE.bazel && -f BUILD ]]
 if [[ "$FIXTURE_STATUS" != 0 ]]; then
   exit "$FIXTURE_STATUS"
@@ -67,7 +67,7 @@ EOF
   else
     assert_equals 'original lockfile' "$(cat "$destination")"
   fi
-  local generated_workspace="$(cat "${root}/workspace")"
+  local generated_workspace="$(cat "${root}/generated.workspace")"
   [[ ! -d "$generated_workspace" ]] \
     || fail "Temporary workspace was not removed: ${generated_workspace}"
 }
@@ -85,6 +85,7 @@ function test_workspace_path_with_spaces() {
 }
 
 function test_temporary_path_with_spaces() {
+  # Some platforms' mktemp -t ignores TMPDIR. Check the actual generated path.
   check_update runfiles workspace 'tmp with spaces'
 }
 
