@@ -1,0 +1,19 @@
+name: Validate bazel-dev executable path quoting
+on:
+  push:
+    branches: [test/bazel-dev-quote-paths-validation]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 3
+      - name: Check the fix and reproduce the original failures
+        shell: bash
+        run: |
+          git diff --check 1de6bcf1f38beb297e8d45f7bf10df3a2761927b 4a3a21ff461018adac153371006cf193e4c28068
+          git show 1de6bcf1f38beb297e8d45f7bf10df3a2761927b:scripts/bazel-dev.sh > "$RUNNER_TEMP/bazel-dev.original.sh"
+          bash validation/bazel-dev-path-regression.sh "$RUNNER_TEMP/bazel-dev.original.sh" scripts/bazel-dev.sh
