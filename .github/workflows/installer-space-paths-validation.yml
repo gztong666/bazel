@@ -1,0 +1,55 @@
+name: Validate installer paths with spaces
+on:
+  push:
+    branches: [test/installer-space-paths-validation]
+permissions:
+  contents: read
+jobs:
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 2
+      - name: Prepare Bazel
+        shell: bash
+        run: |
+          version=$(cat .bazelversion)
+          os=$(uname -s | tr '[:upper:]' '[:lower:]')
+          arch=$(uname -m)
+          curl --fail --location --retry 3 "https://github.com/bazelbuild/bazel/releases/download/${version}/bazel-${version}-${os}-${arch}" -o "$RUNNER_TEMP/bazel"
+          chmod +x "$RUNNER_TEMP/bazel"
+          "$RUNNER_TEMP/bazel" --version
+      - name: Reproduce failures with the original installer
+        shell: bash
+        run: |
+          git show 1de6bcf1f38beb297e8d45f7bf10df3a2761927b:scripts/packages/template_bin.sh > scripts/packages/template_bin.sh
+          set +e
+          "$RUNNER_TEMP/bazel" --batch test --jobs=2 --test_output=all //scripts/packages:template_bin_test
+          status=$?
+          set -e
+          test "$status" -eq 3
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          path = Path('bazel-testlogs/scripts/packages/template_bin_test/test.xml')
+          cases = ET.parse(path).findall('.//testcase')
+          results = {c.attrib['name']: c.find('failure') is not None or c.find('error') is not None for c in cases}
+          print('Original installer failures:', results)
+          expected = {'test_install_plain_prefix': False, 'test_install_prefix_with_spaces': True, 'test_install_bin_with_spaces': True, 'test_install_base_with_spaces': True, 'test_install_user_with_spaces': True}
+          assert results == expected, (results, expected)
+          PY
+      - name: Verify the fixed installer
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          git checkout HEAD -- scripts/packages/template_bin.sh
+          bash -n scripts/packages/template_bin.sh
+          bash -n scripts/packages/template_bin_test.sh
+          git diff --check 1de6bcf1f38beb297e8d45f7bf10df3a2761927b HEAD -- scripts/packages
+          "$RUNNER_TEMP/bazel" --batch test --jobs=2 --test_output=all //scripts/packages:template_bin_test
