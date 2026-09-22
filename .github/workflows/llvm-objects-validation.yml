@@ -1,0 +1,88 @@
+name: Validate LLVM coverage object paths
+on:
+  push:
+    branches: [test/llvm-coverage-object-paths-validation]
+permissions:
+  contents: read
+jobs:
+  regression:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 5
+      - name: Prepare tools and check formatting
+        shell: bash
+        run: |
+          version=$(cat .bazelversion)
+          os=$(uname -s | tr '[:upper:]' '[:lower:]')
+          arch=$(uname -m)
+          curl --fail --location --retry 3 "https://github.com/bazelbuild/bazel/releases/download/${version}/bazel-${version}-${os}-${arch}" -o "$RUNNER_TEMP/bazel"
+          chmod +x "$RUNNER_TEMP/bazel"
+          "$RUNNER_TEMP/bazel" --version
+          if [[ "$arch" == x86_64 ]]; then arch=amd64; fi
+          curl --fail --location --retry 3 "https://github.com/bazelbuild/buildtools/releases/download/v10.0.1/buildifier-${os}-${arch}" -o "$RUNNER_TEMP/buildifier"
+          chmod +x "$RUNNER_TEMP/buildifier"
+          "$RUNNER_TEMP/buildifier" -mode=check tools/test/BUILD
+          bash -n tools/test/collect_cc_coverage.sh tools/test/collect_cc_coverage_test.sh
+          git diff --check bba8a8a3a1b3844c4dbb442ba7ca69575187b14c HEAD -- tools/test
+          if [[ "$os" == darwin ]]; then
+            echo "VALIDATE_CLANG=$(xcrun --find clang)" >> "$GITHUB_ENV"
+            echo "VALIDATE_PROFDATA=$(xcrun --find llvm-profdata)" >> "$GITHUB_ENV"
+            echo "VALIDATE_COV=$(xcrun --find llvm-cov)" >> "$GITHUB_ENV"
+          else
+            found=0
+            for bin in /usr/lib/llvm-*/bin; do
+              if [[ -x "$bin/clang" && -x "$bin/llvm-profdata" && -x "$bin/llvm-cov" ]]; then
+                echo "VALIDATE_CLANG=$bin/clang" >> "$GITHUB_ENV"
+                echo "VALIDATE_PROFDATA=$bin/llvm-profdata" >> "$GITHUB_ENV"
+                echo "VALIDATE_COV=$bin/llvm-cov" >> "$GITHUB_ENV"
+                found=1
+                break
+              fi
+            done
+            test "$found" -eq 1
+          fi
+      - name: Reproduce with real LLVM tools and verify fix
+        shell: bash
+        run: |
+          git show bba8a8a3a1b3844c4dbb442ba7ca69575187b14c:tools/test/collect_cc_coverage.sh > "$RUNNER_TEMP/original-collector.sh"
+          "$VALIDATE_CLANG" --version
+          "$VALIDATE_COV" --version
+          python3 validation/validate_llvm_objects.py "$RUNNER_TEMP/original-collector.sh" tools/test/collect_cc_coverage.sh
+      - name: Run regression tests against original collector
+        shell: bash
+        run: |
+          git show bba8a8a3a1b3844c4dbb442ba7ca69575187b14c:tools/test/collect_cc_coverage.sh > tools/test/collect_cc_coverage.sh
+          set +e
+          "$RUNNER_TEMP/bazel" --batch test --jobs=2 --test_output=all //tools/test:collect_cc_coverage_test
+          status=$?
+          set -e
+          test "$status" -eq 3
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          cases = ET.parse('bazel-testlogs/tools/test/collect_cc_coverage_test/test.xml').findall('.//testcase')
+          results = {c.attrib['name']: c.find('failure') is not None or c.find('error') is not None for c in cases}
+          expected = {
+              'test_plain_object': False,
+              'test_multiple_object_lists': False,
+              'test_object_paths_with_spaces': True,
+              'test_object_paths_with_glob_characters': True,
+              'test_object_paths_with_surrounding_whitespace': True,
+              'test_object_list_path_with_leading_whitespace': True,
+              'test_no_runtime_objects': False,
+          }
+          print('Original collector failures:', results)
+          assert results == expected, (results, expected)
+          PY
+      - name: Run regression tests against fixed collector
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          git checkout HEAD -- tools/test/collect_cc_coverage.sh
+          "$RUNNER_TEMP/bazel" --batch test --jobs=2 --test_output=all //tools/test:collect_cc_coverage_test
